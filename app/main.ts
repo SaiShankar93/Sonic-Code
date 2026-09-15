@@ -1,5 +1,10 @@
 import OpenAI from "openai";
 
+declare const process: {
+  argv: string[];
+  env: Record<string, string | undefined>;
+};
+
 async function main() {
   const [, , flag, prompt] = process.argv;
   const apiKey = process.env.OPENROUTER_API_KEY;
