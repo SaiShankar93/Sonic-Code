@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { readFile } from "node:fs/promises";
 
 async function main() {
   const [, , flag, prompt] = process.argv;
@@ -46,11 +47,21 @@ async function main() {
     throw new Error("no choices in response");
   }
 
-  // You can use print statements as follows for debugging, they'll be visible when running tests.
-  console.error("Logs from your program will appear here!");
+  const toolCall = response.choices[0].message.tool_calls?.[0];
+  if (!toolCall || toolCall.type !== "function" || toolCall.function.name !== "Read") {
+    throw new Error("expected a Read tool call");
+  }
 
-  // TODO: Uncomment the lines below to pass the first stage
-  console.log(response.choices[0].message.content);
+  const argumentsObject = JSON.parse(toolCall.function.arguments) as {
+    file_path?: unknown;
+  };
+  if (typeof argumentsObject.file_path !== "string") {
+    throw new Error("Read tool call must include a file_path");
+  }
+
+  const contents = await readFile(argumentsObject.file_path, "utf8");
+  process.stdout.write(contents);
+
 }
 
 main();
