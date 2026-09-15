@@ -1,5 +1,9 @@
 import OpenAI from "openai";
+import { exec } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 async function main() {
   const [, , flag, prompt] = process.argv;
@@ -60,6 +64,23 @@ async function main() {
           }
         }
       }
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "Bash",
+        description: "Execute a shell command",
+        parameters: {
+          type: "object",
+          required: ["command"],
+          properties: {
+            command: {
+              type: "string",
+              description: "The command to execute"
+            }
+          }
+        }
+      }
     }
   ];
 
@@ -91,6 +112,7 @@ async function main() {
       const argumentsObject = JSON.parse(toolCall.function.arguments) as {
         file_path?: unknown;
         content?: unknown;
+        command?: unknown;
       };
 
       if (toolCall.function.name === "Read") {
@@ -117,6 +139,31 @@ async function main() {
           role: "tool",
           tool_call_id: toolCall.id,
           content: "File written successfully"
+        });
+      } else if (toolCall.function.name === "Bash") {
+        if (typeof argumentsObject.command !== "string") {
+          throw new Error("Bash tool call must include a command");
+        }
+
+        let commandOutput: string;
+        try {
+          const result = await execAsync(argumentsObject.command);
+          commandOutput = result.stdout + result.stderr;
+        } catch (error) {
+          const commandError = error as {
+            stdout?: string;
+            stderr?: string;
+            message?: string;
+          };
+          commandOutput =
+            (commandError.stdout ?? "") +
+            (commandError.stderr ?? commandError.message ?? "");
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: commandOutput
         });
       } else {
         throw new Error(`unsupported tool: ${toolCall.function.name}`);
