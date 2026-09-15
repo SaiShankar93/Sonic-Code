@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@codecrafters/claude-code",
+      "name": "claude-code-clone",
       "dependencies": {
         "openai": "^6.16.0",
       },

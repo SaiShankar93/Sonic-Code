@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 const DEFAULT_MODEL = "cohere/north-mini-code:free";
 const DEFAULT_MAX_ITERATIONS = 25;
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 
 type ToolArguments = {
   file_path?: unknown;
@@ -148,24 +149,30 @@ async function main() {
     process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
   const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
   const workingDirectory = process.cwd();
-  const maxIterations = Number.parseInt(
-    process.env.CLAUDE_MAX_ITERATIONS ?? String(DEFAULT_MAX_ITERATIONS),
-    10
+  const maxIterations = Number(
+    process.env.CLAUDE_MAX_ITERATIONS ?? DEFAULT_MAX_ITERATIONS
+  );
+  const requestTimeout = Number(
+    process.env.OPENROUTER_TIMEOUT_MS ?? DEFAULT_REQUEST_TIMEOUT_MS
   );
 
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY is not set. Add it to your environment.");
   }
   if (flag !== "-p" || !prompt) {
-    throw new Error("usage: ./your_program.sh -p \"your request\"");
+    throw new Error("usage: bun run app/main.ts -p \"your request\"");
   }
-  if (!Number.isFinite(maxIterations) || maxIterations < 1) {
+  if (!Number.isInteger(maxIterations) || maxIterations < 1) {
     throw new Error("CLAUDE_MAX_ITERATIONS must be a positive integer");
+  }
+  if (!Number.isInteger(requestTimeout) || requestTimeout < 1) {
+    throw new Error("OPENROUTER_TIMEOUT_MS must be a positive integer");
   }
 
   const client = new OpenAI({
     apiKey: apiKey,
-    baseURL: baseURL
+    baseURL: baseURL,
+    timeout: requestTimeout
   });
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
