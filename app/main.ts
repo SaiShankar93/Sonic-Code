@@ -48,7 +48,11 @@ async function main() {
   }
 
   const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall || toolCall.type !== "function" || toolCall.function.name !== "Read") {
+  if (!toolCall) {
+    process.stdout.write(response.choices[0].message.content ?? "");
+    return;
+  }
+  if (toolCall.type !== "function" || toolCall.function.name !== "Read") {
     throw new Error("expected a Read tool call");
   }
 
