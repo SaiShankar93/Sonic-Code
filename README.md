@@ -55,10 +55,11 @@ Then run a request from the repository you want the agent to modify:
 ./your_program.sh -p "Inspect the project, fix the failing tests, and summarize the changes."
 ```
 
-The model can be changed with `OPENROUTER_MODEL`, the endpoint with
-`OPENROUTER_BASE_URL`, and the maximum number of agent turns with
-`CLAUDE_MAX_ITERATIONS` (default: 25). Tool output stays internal; only the
-final assistant response is written to stdout.
+The default model is the free
+`cohere/north-mini-code:free`. You can change it with
+`OPENROUTER_MODEL`, change the endpoint with `OPENROUTER_BASE_URL`, and set the
+maximum number of agent turns with `CLAUDE_MAX_ITERATIONS` (default: 25). Tool
+output stays internal; only the final assistant response is written to stdout.
 
 Validate the code without making an API request:
 

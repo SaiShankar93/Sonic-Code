@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
-const DEFAULT_MODEL = "anthropic/claude-haiku-4.5";
+const DEFAULT_MODEL = "cohere/north-mini-code:free";
 const DEFAULT_MAX_ITERATIONS = 25;
 
 type ToolArguments = {
