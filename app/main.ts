@@ -4,18 +4,163 @@ import { readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
+const DEFAULT_MODEL = "anthropic/claude-haiku-4.5";
+const DEFAULT_MAX_ITERATIONS = 25;
+
+type ToolArguments = {
+  file_path?: unknown;
+  content?: unknown;
+  command?: unknown;
+};
+
+const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "Read",
+      description: "Read and return the contents of a file",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path to the file to read"
+          }
+        },
+        required: ["file_path"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "Write",
+      description: "Write content to a file",
+      parameters: {
+        type: "object",
+        required: ["file_path", "content"],
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The path of the file to write to"
+          },
+          content: {
+            type: "string",
+            description: "The content to write to the file"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "Bash",
+      description: "Execute a shell command",
+      parameters: {
+        type: "object",
+        required: ["command"],
+        properties: {
+          command: {
+            type: "string",
+            description: "The command to execute"
+          }
+        }
+      }
+    }
+  }
+];
+
+const systemPrompt = `You are a practical coding assistant running in a local repository.
+Use the available tools to inspect files, make requested changes, and run relevant checks.
+Work from the current working directory. Be precise and concise in your final response.`;
+
+function parseArguments(rawArguments: string): ToolArguments {
+  try {
+    const parsed: unknown = JSON.parse(rawArguments);
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("tool arguments must be a JSON object");
+    }
+    return parsed as ToolArguments;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "invalid JSON";
+    throw new Error(`invalid tool arguments: ${message}`);
+  }
+}
+
+async function executeTool(
+  toolName: string,
+  rawArguments: string,
+  workingDirectory: string
+): Promise<string> {
+  const argumentsObject = parseArguments(rawArguments);
+
+  if (toolName === "Read") {
+    if (typeof argumentsObject.file_path !== "string") {
+      throw new Error("Read requires a string file_path");
+    }
+    return readFile(argumentsObject.file_path, "utf8");
+  }
+
+  if (toolName === "Write") {
+    if (
+      typeof argumentsObject.file_path !== "string" ||
+      typeof argumentsObject.content !== "string"
+    ) {
+      throw new Error("Write requires string file_path and content");
+    }
+    await writeFile(argumentsObject.file_path, argumentsObject.content, "utf8");
+    return "File written successfully";
+  }
+
+  if (toolName === "Bash") {
+    if (typeof argumentsObject.command !== "string") {
+      throw new Error("Bash requires a string command");
+    }
+
+    try {
+      const result = await execAsync(argumentsObject.command, {
+        cwd: workingDirectory,
+        maxBuffer: 10 * 1024 * 1024
+      });
+      return result.stdout + result.stderr;
+    } catch (error) {
+      const commandError = error as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+      };
+      return (
+        (commandError.stdout ?? "") +
+        (commandError.stderr ?? "") +
+        (commandError.message ?? "Command failed")
+      );
+    }
+  }
+
+  throw new Error(`unsupported tool: ${toolName}`);
+}
 
 async function main() {
   const [, , flag, prompt] = process.argv;
   const apiKey = process.env.OPENROUTER_API_KEY;
   const baseURL =
     process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
+  const workingDirectory = process.cwd();
+  const maxIterations = Number.parseInt(
+    process.env.CLAUDE_MAX_ITERATIONS ?? String(DEFAULT_MAX_ITERATIONS),
+    10
+  );
 
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is not set");
+    throw new Error("OPENROUTER_API_KEY is not set. Add it to your environment.");
   }
   if (flag !== "-p" || !prompt) {
-    throw new Error("error: -p flag is required");
+    throw new Error("usage: ./your_program.sh -p \"your request\"");
+  }
+  if (!Number.isFinite(maxIterations) || maxIterations < 1) {
+    throw new Error("CLAUDE_MAX_ITERATIONS must be a positive integer");
   }
 
   const client = new OpenAI({
@@ -24,69 +169,16 @@ async function main() {
   });
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "user", content: prompt }
-  ];
-  const tools = [
+    { role: "system", content: systemPrompt },
     {
-      type: "function" as const,
-      function: {
-        name: "Read",
-        description: "Read and return the contents of a file",
-        parameters: {
-          type: "object",
-          properties: {
-            file_path: {
-              type: "string",
-              description: "The path to the file to read"
-            }
-          },
-          required: ["file_path"]
-        }
-      }
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "Write",
-        description: "Write content to a file",
-        parameters: {
-          type: "object",
-          required: ["file_path", "content"],
-          properties: {
-            file_path: {
-              type: "string",
-              description: "The path of the file to write to"
-            },
-            content: {
-              type: "string",
-              description: "The content to write to the file"
-            }
-          }
-        }
-      }
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "Bash",
-        description: "Execute a shell command",
-        parameters: {
-          type: "object",
-          required: ["command"],
-          properties: {
-            command: {
-              type: "string",
-              description: "The command to execute"
-            }
-          }
-        }
-      }
+      role: "user",
+      content: `Working directory: ${workingDirectory}\n\n${prompt}`
     }
   ];
 
-  while (true) {
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
     const response = await client.chat.completions.create({
-      model: "anthropic/claude-haiku-4.5",
+      model,
       messages,
       tools
     });
@@ -106,70 +198,38 @@ async function main() {
 
     for (const toolCall of toolCalls) {
       if (toolCall.type !== "function") {
-        throw new Error("expected a function tool call");
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: "Unsupported non-function tool call"
+        });
+        continue;
       }
 
-      const argumentsObject = JSON.parse(toolCall.function.arguments) as {
-        file_path?: unknown;
-        content?: unknown;
-        command?: unknown;
-      };
-
-      if (toolCall.function.name === "Read") {
-        if (typeof argumentsObject.file_path !== "string") {
-          throw new Error("Read tool call must include a file_path");
-        }
-
-        const contents = await readFile(argumentsObject.file_path, "utf8");
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: contents
-        });
-      } else if (toolCall.function.name === "Write") {
-        if (
-          typeof argumentsObject.file_path !== "string" ||
-          typeof argumentsObject.content !== "string"
-        ) {
-          throw new Error("Write tool call must include a file_path and content");
-        }
-
-        await writeFile(argumentsObject.file_path, argumentsObject.content, "utf8");
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: "File written successfully"
-        });
-      } else if (toolCall.function.name === "Bash") {
-        if (typeof argumentsObject.command !== "string") {
-          throw new Error("Bash tool call must include a command");
-        }
-
-        let commandOutput: string;
-        try {
-          const result = await execAsync(argumentsObject.command);
-          commandOutput = result.stdout + result.stderr;
-        } catch (error) {
-          const commandError = error as {
-            stdout?: string;
-            stderr?: string;
-            message?: string;
-          };
-          commandOutput =
-            (commandError.stdout ?? "") +
-            (commandError.stderr ?? commandError.message ?? "");
-        }
-
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: commandOutput
-        });
-      } else {
-        throw new Error(`unsupported tool: ${toolCall.function.name}`);
+      let result: string;
+      try {
+        result = await executeTool(
+          toolCall.function.name,
+          toolCall.function.arguments,
+          workingDirectory
+        );
+      } catch (error) {
+        result = error instanceof Error ? `Error: ${error.message}` : "Error: tool failed";
       }
+
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: result
+      });
     }
   }
+
+  throw new Error(`agent stopped after ${maxIterations} iterations without a final response`);
 }
 
-main();
+main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  process.exitCode = 1;
+});

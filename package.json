@@ -3,7 +3,8 @@
   "description": "Build your own Claude Code challenge, from CodeCrafters",
   "type": "module",
   "scripts": {
-    "dev": "bun run app/main.ts"
+    "dev": "bun run app/main.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "openai": "^6.16.0"
