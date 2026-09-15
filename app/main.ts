@@ -19,53 +19,69 @@ async function main() {
     baseURL: baseURL
   });
 
-  const response = await client.chat.completions.create({
-    model: "anthropic/claude-haiku-4.5",
-    messages: [{ role: "user", content: prompt }],
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "Read",
-          description: "Read and return the contents of a file",
-          parameters: {
-            type: "object",
-            properties: {
-              file_path: {
-                type: "string",
-                description: "The path to the file to read"
-              }
-            },
-            required: ["file_path"]
-          }
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "user", content: prompt }
+  ];
+  const tools = [
+    {
+      type: "function" as const,
+      function: {
+        name: "Read",
+        description: "Read and return the contents of a file",
+        parameters: {
+          type: "object",
+          properties: {
+            file_path: {
+              type: "string",
+              description: "The path to the file to read"
+            }
+          },
+          required: ["file_path"]
         }
       }
-    ]
-  });
+    }
+  ];
 
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("no choices in response");
+  while (true) {
+    const response = await client.chat.completions.create({
+      model: "anthropic/claude-haiku-4.5",
+      messages,
+      tools
+    });
+
+    if (!response.choices || response.choices.length === 0) {
+      throw new Error("no choices in response");
+    }
+
+    const assistantMessage = response.choices[0].message;
+    messages.push(assistantMessage);
+
+    const toolCalls = assistantMessage.tool_calls;
+    if (!toolCalls || toolCalls.length === 0) {
+      process.stdout.write(assistantMessage.content ?? "");
+      return;
+    }
+
+    for (const toolCall of toolCalls) {
+      if (toolCall.type !== "function" || toolCall.function.name !== "Read") {
+        throw new Error("expected a Read tool call");
+      }
+
+      const argumentsObject = JSON.parse(toolCall.function.arguments) as {
+        file_path?: unknown;
+      };
+      if (typeof argumentsObject.file_path !== "string") {
+        throw new Error("Read tool call must include a file_path");
+      }
+
+      const contents = await readFile(argumentsObject.file_path, "utf8");
+      messages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: contents
+      });
+    }
   }
-
-  const toolCall = response.choices[0].message.tool_calls?.[0];
-  if (!toolCall) {
-    process.stdout.write(response.choices[0].message.content ?? "");
-    return;
-  }
-  if (toolCall.type !== "function" || toolCall.function.name !== "Read") {
-    throw new Error("expected a Read tool call");
-  }
-
-  const argumentsObject = JSON.parse(toolCall.function.arguments) as {
-    file_path?: unknown;
-  };
-  if (typeof argumentsObject.file_path !== "string") {
-    throw new Error("Read tool call must include a file_path");
-  }
-
-  const contents = await readFile(argumentsObject.file_path, "utf8");
-  process.stdout.write(contents);
-
 }
 
 main();
